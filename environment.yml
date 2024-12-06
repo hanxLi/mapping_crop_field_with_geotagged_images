@@ -1,0 +1,36 @@
+name: mapping_crop_field_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - geopandas
+  - matplotlib
+  - shapely
+  - pyproj
+  - rasterio
+  - osmnx
+  - pytorch
+  - torchvision
+  - torchaudio
+  - ipykernel
+  - jupyter
+  - jupyterlab
+  - nb_conda
+  - notebook
+  - earthengine-api
+  - geemap
+  - segment-geospatial
+  - google-api-python-client
+  - google-auth
+  - google-auth-oauthlib
+  - google-auth-httplib2
+  - pillow
+  - scikit-learn
+  - tqdm
+  - pip
+  - pip:
+      - torch_mps
+      - jupyter_contrib_nbextensions

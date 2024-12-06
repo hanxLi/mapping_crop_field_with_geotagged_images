@@ -197,7 +197,7 @@ def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, 
     if delineations.crs != raster_crs:
         delineations = delineations.to_crs(raster_crs)
 
-    delineations_no_touch = delineations[~delineations.geometry.intersects(gdf_edges_clipped.union_all())]
+    delineations_no_touch = delineations[~delineations.geometry.intersects(gdf_edges_clipped.union_all())].copy()
 
     buffered_roads = gdf_edges_clipped.buffer(200)
 

@@ -197,7 +197,7 @@ def generate_delineation(df, color_composite, save_path, credentials_file_path, 
 
     if visualize:
         Map = geemap.Map(center=((aoi_n + aoi_s) / 2, (aoi_w + aoi_e) / 2), zoom=15)
-        Map.add_vector(gpk_segment_path, layer_name="SAM2 Segments")
+        Map.add_vector(gpk_segment_path, layer_name="SAM Segments")
         Map.addLayer(s2_img, 
                      {'min': 0, 'max': 255, 'bands': selected_bands, 'gamma': 1.7}, 
                      name="Sentinel 2 IMG")
@@ -279,8 +279,8 @@ def assign_crop_field(df, root_dir, batch_process=False, field_path=None):
                 extent = [bounds.left, bounds.right, bounds.bottom, bounds.top]
                 ax.imshow(img, extent=extent, cmap='gray', origin='upper')
 
-                delineation.plot(ax=ax, edgecolor="gray", facecolor="none", 
-                                 linewidth=1, label="All Shapes")
+                delineation.plot(ax=ax, edgecolor="purple", facecolor="none", 
+                                 linewidth=1, label="All Fields")
                 if selected_shape is not None:
                     gpd.GeoSeries([selected_shape], crs=raster_crs).plot(ax=ax,
                                                                          edgecolor="green",
@@ -300,12 +300,19 @@ def assign_crop_field(df, root_dir, batch_process=False, field_path=None):
                 plt.axis("off")
                 plt.show()
 
-    processed_gdf = gpd.GeoDataFrame(results, geometry="geometry", crs=raster_crs)
+    # Handle empty results list
+    if not results:
+        print("No intersected shapes found. Returning an empty GeoDataFrame.")
+        processed_gdf = gpd.GeoDataFrame(columns=["filename", "time", "crop_type", "geometry"], crs=raster_crs)
+    else:
+        processed_gdf = gpd.GeoDataFrame(results, crs=raster_crs)
+        processed_gdf.set_geometry("geometry", inplace=True)
 
     if batch_process and field_path:
         processed_gdf.to_file(os.path.join(field_path, "labeled_delineation.gpkg"), driver="GPKG")
 
     return processed_gdf
+
 
 
 def display_assigned_field(df, color_composite, save_path, credentials_file_path, folder_id, batch_process=False):

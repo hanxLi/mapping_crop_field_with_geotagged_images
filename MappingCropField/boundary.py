@@ -137,34 +137,10 @@ def segment_with_sam(input_image_path, output_folder, sam_model):
         return None
     return output_segment_vector_path
 
-
-def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, min_area_threshold=5000, network_type='drive' ,visualize=False):
+def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, min_area_threshold=5000, network_type='drive', visualize=False):
     """
-    Extracts road networks within the bounds of a GeoTIFF, updates field delineations by removing 
-    shapes that touch the road network, applies a buffer around the road network, and retains only 
-    delineations that touch the buffer.
-
-    Parameters:
-    -----------
-    geotiff_path : str
-        Path to the input GeoTIFF file.
-    field_delineation_path : str
-        Path to the GeoPackage file containing field delineations.
-    min_area_threshold : float
-        Minimum area threshold for polygons (in CRS units, e.g., square meters).
-    network_type : str
-        Type of road network to retrieve (e.g., 'drive', 'walk', etc.).
-    visualize : bool
-        If True, visualizes the road network and filtered delineations.
-
-    Returns:
-    --------
-    GeoDataFrame
-        GeoDataFrame containing the clipped road network.
-
-    Notes:
-    --------
-    The OSM download part is inspired by ChatGPT (have to fix its output for like 3 hrs lol)
+    Extracts road networks within the bounds of a GeoTIFF, or falls back to a point buffer 
+    if no road network is found. Updates field delineations accordingly.
     """
     with rasterio.open(geotiff_path) as src:
         bounds = src.bounds
@@ -176,13 +152,23 @@ def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, 
     right, top = transformer_to_wgs84.transform(max_x, max_y)
     bbox = (left, bottom, right, top)
 
-    G = ox.graph.graph_from_bbox(
-        bbox=bbox,
-        network_type=network_type,
-        simplify=True,
-        retain_all=False
-    )
-    _, gdf_edges = ox.graph_to_gdfs(G)
+    try:
+        G = ox.graph.graph_from_bbox(
+            bbox=bbox,
+            network_type=network_type,
+            simplify=True,
+            retain_all=False
+        )
+        _, gdf_edges = ox.graph_to_gdfs(G)
+    except ValueError:
+        print("No roads found. Falling back to point buffer.")
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_point = Point(center_x, center_y)
+        gdf_edges = gpd.GeoDataFrame(
+            geometry=[center_point.buffer(200)],
+            crs=raster_crs
+        )
 
     if gdf_edges.crs != raster_crs:
         gdf_edges = gdf_edges.to_crs(raster_crs)
@@ -190,18 +176,18 @@ def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, 
     raster_bounds_geom = box(*bounds)
     gdf_edges_clipped = gdf_edges[gdf_edges.intersects(raster_bounds_geom)]
 
-    if gdf_edges_clipped.empty:
-        raise ValueError("No roads found within the given GeoTIFF bounds.")
-
     delineations = gpd.read_file(field_delineation_path)
     if delineations.crs != raster_crs:
         delineations = delineations.to_crs(raster_crs)
 
-    delineations_no_touch = delineations[~delineations.geometry.intersects(gdf_edges_clipped.union_all())].copy()
-
-    buffered_roads = gdf_edges_clipped.buffer(200)
-
-    filtered_delineations = delineations_no_touch[delineations_no_touch.geometry.intersects(buffered_roads.union_all())].copy()
+    if not gdf_edges_clipped.empty:
+        delineations_no_touch = delineations[~delineations.geometry.intersects(gdf_edges_clipped.unary_union)]
+        buffered_roads = gdf_edges_clipped.buffer(200)
+        filtered_delineations = delineations_no_touch[delineations_no_touch.geometry.intersects(buffered_roads.unary_union)].copy()
+    else:
+        print("Using point-based buffer for filtering delineations.")
+        buffered_point = center_point.buffer(200)
+        filtered_delineations = delineations[delineations.geometry.intersects(buffered_point)].copy()
 
     filtered_delineations["area"] = filtered_delineations.geometry.area
     filtered_delineations = filtered_delineations[filtered_delineations["area"] >= min_area_threshold]
@@ -209,18 +195,102 @@ def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, 
     if visualize:
         plt.figure(figsize=(12, 12))
         plt.title("Road Network and Filtered Field Delineations")
-
         with rasterio.open(geotiff_path) as src:
             img = src.read(1)
             extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
             plt.imshow(img, extent=extent, cmap='gray', origin='upper')
-
         gdf_edges_clipped.plot(ax=plt.gca(), color='red', linewidth=1, label='Road Network')
-
         filtered_delineations.plot(ax=plt.gca(), edgecolor='blue', facecolor='none', linewidth=1, label='Filtered Field Delineations')
-
         plt.axis("off")
         plt.show()
 
     filtered_delineations.to_file(field_delineation_path, driver="GPKG")
     return gdf_edges_clipped
+
+
+# def extract_roads_and_update_delineations(geotiff_path, field_delineation_path, min_area_threshold=1000, network_type='drive' ,visualize=False):
+#     """
+#     Extracts road networks within the bounds of a GeoTIFF, updates field delineations by removing 
+#     shapes that touch the road network, applies a buffer around the road network, and retains only 
+#     delineations that touch the buffer.
+
+#     Parameters:
+#     -----------
+#     geotiff_path : str
+#         Path to the input GeoTIFF file.
+#     field_delineation_path : str
+#         Path to the GeoPackage file containing field delineations.
+#     min_area_threshold : float
+#         Minimum area threshold for polygons (in CRS units, e.g., square meters).
+#     network_type : str
+#         Type of road network to retrieve (e.g., 'drive', 'walk', etc.).
+#     visualize : bool
+#         If True, visualizes the road network and filtered delineations.
+
+#     Returns:
+#     --------
+#     GeoDataFrame
+#         GeoDataFrame containing the clipped road network.
+
+#     Notes:
+#     --------
+#     The OSM download part is inspired by ChatGPT (have to fix its output for like 3 hrs lol)
+#     """
+#     with rasterio.open(geotiff_path) as src:
+#         bounds = src.bounds
+#         raster_crs = src.crs
+
+#     transformer_to_wgs84 = Transformer.from_crs(raster_crs, "EPSG:4326", always_xy=True)
+#     min_x, min_y, max_x, max_y = bounds
+#     left, bottom = transformer_to_wgs84.transform(min_x, min_y)
+#     right, top = transformer_to_wgs84.transform(max_x, max_y)
+#     bbox = (left, bottom, right, top)
+
+#     G = ox.graph.graph_from_bbox(
+#         bbox=bbox,
+#         network_type=network_type,
+#         simplify=True,
+#         retain_all=False
+#     )
+#     _, gdf_edges = ox.graph_to_gdfs(G)
+
+#     if gdf_edges.crs != raster_crs:
+#         gdf_edges = gdf_edges.to_crs(raster_crs)
+
+#     raster_bounds_geom = box(*bounds)
+#     gdf_edges_clipped = gdf_edges[gdf_edges.intersects(raster_bounds_geom)]
+
+#     if gdf_edges_clipped.empty:
+#         raise ValueError("No roads found within the given GeoTIFF bounds.")
+
+#     delineations = gpd.read_file(field_delineation_path)
+#     if delineations.crs != raster_crs:
+#         delineations = delineations.to_crs(raster_crs)
+
+#     delineations_no_touch = delineations[~delineations.geometry.intersects(gdf_edges_clipped.union_all())].copy()
+
+#     buffered_roads = gdf_edges_clipped.buffer(200)
+
+#     filtered_delineations = delineations_no_touch[delineations_no_touch.geometry.intersects(buffered_roads.union_all())].copy()
+
+#     filtered_delineations["area"] = filtered_delineations.geometry.area
+#     filtered_delineations = filtered_delineations[filtered_delineations["area"] >= min_area_threshold]
+
+#     if visualize:
+#         plt.figure(figsize=(12, 12))
+#         plt.title("Road Network and Filtered Field Delineations")
+
+#         with rasterio.open(geotiff_path) as src:
+#             img = src.read(1)
+#             extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+#             plt.imshow(img, extent=extent, cmap='gray', origin='upper')
+
+#         gdf_edges_clipped.plot(ax=plt.gca(), color='red', linewidth=1, label='Road Network')
+
+#         filtered_delineations.plot(ax=plt.gca(), edgecolor='blue', facecolor='none', linewidth=1, label='Filtered Field Delineations')
+
+#         plt.axis("off")
+#         plt.show()
+
+#     filtered_delineations.to_file(field_delineation_path, driver="GPKG")
+#     return gdf_edges_clipped
